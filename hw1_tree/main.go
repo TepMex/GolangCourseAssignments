@@ -1,32 +1,23 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strings"
 )
 
-const SymbolLineH = "─"
-const SymbolLineV = "│"
-const SymbolBranch = "├"
-const SymbolAngle = "└"
+const LastPrefix = "└───"
+const NoLastPrefix = "├───"
+const DepthPrefix = "│	"
+const EmptySpacePrefix = "	"
 
-type TreeNode struct {
-	Parent *TreeNode
-	Str    string
-}
-
-type TreeNodeList []TreeNode
-
-func (t *TreeNodeList) GetDepth(node TreeNode) int {
-	if node.Parent == nil {
-		return 0
-	} else if node.Parent.Parent == nil {
-		return 1
-	} else {
-		return 1 + t.GetDepth(*node.Parent)
-	}
+type FileWithStat struct {
+	Name string
+	Stat os.FileInfo
+	Path string
 }
 
 func main() {
@@ -45,9 +36,30 @@ func main() {
 func dirTree(out io.Writer, path string, printFiles bool) error {
 	var sb strings.Builder
 
+	for _, name := range getAllFiles(path, printFiles, "") {
+		sb.WriteString(name)
+		sb.WriteString("\n")
+	}
+
+	out.Write([]byte(sb.String()))
+	return nil
+}
+
+func getAllFiles(path string, printFiles bool, parentPrefix string) []string {
+	var result []string
+
 	dir, err := os.Open(path)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	stat, err := dir.Stat()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if !stat.IsDir() {
+		return result
 	}
 
 	names, err := dir.Readdirnames(0)
@@ -55,11 +67,56 @@ func dirTree(out io.Writer, path string, printFiles bool) error {
 		log.Fatal(err)
 	}
 
+	sort.Strings(names)
+
+	var items []FileWithStat
 	for _, name := range names {
-		sb.WriteString(name)
-		sb.WriteString("\n")
+		filepath := path + string(os.PathSeparator) + name
+		stat, err := os.Stat(filepath)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if stat.IsDir() || printFiles {
+			items = append(items, FileWithStat{
+				Name: name,
+				Stat: stat,
+				Path: filepath,
+			})
+		}
 	}
 
-	out.Write([]byte(sb.String()))
-	return nil
+	for i, file := range items {
+
+		isLastNode := i == len(items)-1
+
+		var nextPrefix string
+		var selfPrefix string
+		if isLastNode {
+			selfPrefix = LastPrefix
+			nextPrefix = EmptySpacePrefix
+		} else {
+			selfPrefix = NoLastPrefix
+			nextPrefix = DepthPrefix
+		}
+
+		renderStr := parentPrefix + selfPrefix + file.Name
+
+		if printFiles && !file.Stat.IsDir() {
+			size := file.Stat.Size()
+			if size > 0 {
+				renderStr += fmt.Sprintf(" (%db)", size)
+			} else {
+				renderStr += " (empty)"
+			}
+		}
+
+		result = append(result, renderStr)
+
+		next := getAllFiles(file.Path, printFiles, parentPrefix+nextPrefix)
+		result = append(result, next...)
+
+	}
+
+	return result
 }
