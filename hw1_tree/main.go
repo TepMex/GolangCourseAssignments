@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"sort"
-	"strings"
 )
 
 const LastPrefix = "└───"
@@ -34,14 +33,12 @@ func main() {
 }
 
 func dirTree(out io.Writer, path string, printFiles bool) error {
-	var sb strings.Builder
 
 	for _, name := range getAllFiles(path, printFiles, "") {
-		sb.WriteString(name)
-		sb.WriteString("\n")
+		out.Write([]byte(name))
+		out.Write([]byte("\n"))
 	}
 
-	out.Write([]byte(sb.String()))
 	return nil
 }
 
