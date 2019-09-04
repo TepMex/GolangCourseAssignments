@@ -85,7 +85,7 @@ func MultiHash(in, out chan interface{}) {
 
 		resultChan := make(chan string)
 
-		go func(resultCh chan string) {
+		go func(data interface{}, resultCh chan string) {
 
 			var result string
 			var workerChannels []chan string
@@ -110,7 +110,7 @@ func MultiHash(in, out chan interface{}) {
 
 			fmt.Printf("%s MultiHash result: %s\n", dataString, result)
 			resultCh <- result
-		}(resultChan)
+		}(data, resultChan)
 
 		resultChannels = append(resultChannels, resultChan)
 	}
