@@ -71,7 +71,7 @@ func combineSingleHashResult(taskNum int, crcMd5chan, dataChan, resultChan chan 
 		crcData := <-dataChan
 		fmt.Printf("%d SingleHash crc(data) %v\n", taskNum, crcData)
 
-		result := fmt.Sprintf("%s~%s", crcData, crcMd5)
+		result := crcData + "~" + crcMd5
 		fmt.Printf("%d SingleHash result %v\n", taskNum, result)
 		resultChan <- result
 	}()
@@ -92,7 +92,7 @@ func MultiHash(in, out chan interface{}) {
 
 			wg := &sync.WaitGroup{}
 
-			dataString := fmt.Sprintf("%v", data)
+			dataString := data.(string)
 
 			for th := 0; th < threadNum; th++ {
 				workerChannels = append(workerChannels, make(chan string, 1))
@@ -134,7 +134,7 @@ func startCrc32Worker(wg *sync.WaitGroup, data string, out chan<- string) {
 func CombineResults(in, out chan interface{}) {
 	var results []string
 	for data := range in {
-		resultStr := fmt.Sprintf("%v", data)
+		resultStr := data.(string)
 		results = append(results, resultStr)
 	}
 
