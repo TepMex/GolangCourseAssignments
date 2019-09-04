@@ -35,16 +35,26 @@ func startJob(wg *sync.WaitGroup, jb job, in, out chan interface{}) {
 func SingleHash(in, out chan interface{}) {
 	cnt := 0
 	for data := range in {
+		wg := &sync.WaitGroup{}
+
 		dataString := fmt.Sprintf("%v", data)
 		fmt.Printf("%d SingleHash data %v\n", cnt, dataString)
 
 		crcMd5 := DataSignerMd5(dataString)
 		fmt.Printf("%d SingleHash md5(data) %v\n", cnt, crcMd5)
 
-		crcMd5 = DataSignerCrc32(crcMd5)
+		crcMd5Chan := make(chan string, 1)
+		crcChan := make(chan string, 1)
+
+		startCrc32Worker(wg, crcMd5, crcMd5Chan)
+		startCrc32Worker(wg, dataString, crcChan)
+
+		wg.Wait()
+
+		crcMd5 = <-crcMd5Chan
 		fmt.Printf("%d SingleHash crc(md5(data)) %v\n", cnt, crcMd5)
 
-		crc := DataSignerCrc32(dataString)
+		crc := <-crcChan
 		fmt.Printf("%d SingleHash crc(data) %v\n", cnt, crc)
 
 		result := fmt.Sprintf("%s~%s", crc, crcMd5)
