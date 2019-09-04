@@ -8,12 +8,6 @@ import (
 	"sync"
 )
 
-type HashResult struct {
-	Thread  int
-	Hash    string
-	RawData string
-}
-
 const threadNum = 6
 
 func ExecutePipeline(jobs ...job) {
@@ -64,50 +58,41 @@ func SingleHash(in, out chan interface{}) {
 func MultiHash(in, out chan interface{}) {
 	for data := range in {
 		var result string
-		var hashResults []HashResult
+		var workerChannels []chan string
 
 		wg := &sync.WaitGroup{}
-		workersChan := make(chan HashResult, threadNum)
 
 		dataString := fmt.Sprintf("%v", data)
 
 		for th := 0; th < threadNum; th++ {
-			startCrc32Worker(wg, th, dataString, workersChan)
+			workerChannels = append(workerChannels, make(chan string, 1))
+			thStr := strconv.Itoa(th)
+			startCrc32Worker(wg, thStr+dataString, workerChannels[th])
 		}
 
 		wg.Wait()
 
-		for i := 0; i < threadNum; i++ {
-			res := <-workersChan
-			hashResults = append(hashResults, res)
+		for th, ch := range workerChannels {
+			res, ok := <-ch
+
+			if ok {
+				result += res
+				fmt.Printf("%s MultiHash: crc32(th+step1) %d %s\n", data, th, res)
+			}
 		}
 
-		close(workersChan)
-
-		sort.Slice(hashResults, func(i, j int) bool {
-			return hashResults[i].Thread < hashResults[j].Thread
-		})
-
-		for _, hr := range hashResults {
-			result += hr.Hash
-			fmt.Printf("%s MultiHash: crc32(th+step1) %d %s\n", hr.RawData, hr.Thread, hr.Hash)
-		}
 		fmt.Printf("%s MultiHash result: %s\n", dataString, result)
 		out <- result
 	}
 }
 
-func startCrc32Worker(wg *sync.WaitGroup, thread int, data string, out chan<- HashResult) {
+func startCrc32Worker(wg *sync.WaitGroup, data string, out chan<- string) {
 	wg.Add(1)
 	go func() {
-		thStr := strconv.Itoa(thread)
-		crc := DataSignerCrc32(thStr + data)
-		out <- HashResult{
-			Thread:  thread,
-			Hash:    crc,
-			RawData: data,
-		}
+		crc := DataSignerCrc32(data)
+		out <- crc
 		wg.Done()
+		close(out)
 	}()
 }
 
