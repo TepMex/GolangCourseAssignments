@@ -33,6 +33,7 @@ func startJob(wg *sync.WaitGroup, jb job, in, out chan interface{}) {
 }
 
 func SingleHash(in, out chan interface{}) {
+	var resultChannels []chan string
 	cnt := 0
 	for data := range in {
 		wg := &sync.WaitGroup{}
@@ -43,56 +44,80 @@ func SingleHash(in, out chan interface{}) {
 		crcMd5 := DataSignerMd5(dataString)
 		fmt.Printf("%d SingleHash md5(data) %v\n", cnt, crcMd5)
 
-		crcMd5Chan := make(chan string, 1)
-		crcChan := make(chan string, 1)
+		crcMd5Chan := make(chan string)
+		crcChan := make(chan string)
+		resultChan := make(chan string)
 
 		startCrc32Worker(wg, crcMd5, crcMd5Chan)
 		startCrc32Worker(wg, dataString, crcChan)
 
-		wg.Wait()
+		combineSingleHashResult(cnt, crcMd5Chan, crcChan, resultChan)
 
-		crcMd5 = <-crcMd5Chan
-		fmt.Printf("%d SingleHash crc(md5(data)) %v\n", cnt, crcMd5)
-
-		crc := <-crcChan
-		fmt.Printf("%d SingleHash crc(data) %v\n", cnt, crc)
-
-		result := fmt.Sprintf("%s~%s", crc, crcMd5)
-		fmt.Printf("%d SingleHash result %v\n", cnt, result)
-
+		resultChannels = append(resultChannels, resultChan)
 		cnt++
-		out <- result
+	}
+
+	for _, ch := range resultChannels {
+		res := <-ch
+		out <- res
 	}
 }
 
+func combineSingleHashResult(taskNum int, crcMd5chan, dataChan, resultChan chan string) {
+
+	go func() {
+		crcMd5 := <-crcMd5chan
+		fmt.Printf("%d SingleHash crc(md5(data)) %v\n", taskNum, crcMd5)
+		crcData := <-dataChan
+		fmt.Printf("%d SingleHash crc(data) %v\n", taskNum, crcData)
+
+		result := fmt.Sprintf("%s~%s", crcData, crcMd5)
+		fmt.Printf("%d SingleHash result %v\n", taskNum, result)
+		resultChan <- result
+	}()
+
+}
+
 func MultiHash(in, out chan interface{}) {
+	var resultChannels []chan string
+
 	for data := range in {
-		var result string
-		var workerChannels []chan string
 
-		wg := &sync.WaitGroup{}
+		resultChan := make(chan string)
 
-		dataString := fmt.Sprintf("%v", data)
+		go func(resultCh chan string) {
 
-		for th := 0; th < threadNum; th++ {
-			workerChannels = append(workerChannels, make(chan string, 1))
-			thStr := strconv.Itoa(th)
-			startCrc32Worker(wg, thStr+dataString, workerChannels[th])
-		}
+			var result string
+			var workerChannels []chan string
 
-		wg.Wait()
+			wg := &sync.WaitGroup{}
 
-		for th, ch := range workerChannels {
-			res, ok := <-ch
+			dataString := fmt.Sprintf("%v", data)
 
-			if ok {
+			for th := 0; th < threadNum; th++ {
+				workerChannels = append(workerChannels, make(chan string, 1))
+				thStr := strconv.Itoa(th)
+				startCrc32Worker(wg, thStr+dataString, workerChannels[th])
+			}
+
+			wg.Wait()
+
+			for th, ch := range workerChannels {
+				res := <-ch
 				result += res
 				fmt.Printf("%s MultiHash: crc32(th+step1) %d %s\n", data, th, res)
 			}
-		}
 
-		fmt.Printf("%s MultiHash result: %s\n", dataString, result)
-		out <- result
+			fmt.Printf("%s MultiHash result: %s\n", dataString, result)
+			resultCh <- result
+		}(resultChan)
+
+		resultChannels = append(resultChannels, resultChan)
+	}
+
+	for _, ch := range resultChannels {
+		res := <-ch
+		out <- res
 	}
 }
 
