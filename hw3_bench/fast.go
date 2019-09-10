@@ -7,6 +7,9 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strconv"
+	"strings"
+	"sync"
 
 	easyjson "github.com/mailru/easyjson"
 	jlexer "github.com/mailru/easyjson/jlexer"
@@ -152,33 +155,34 @@ func FastSearch(out io.Writer) {
 	}
 
 	r := regexp.MustCompile("@")
-	regexAndroid := regexp.MustCompile("Android")
-	regexMSIE := regexp.MustCompile("MSIE")
 
 	seenBrowsers := []string{}
 	uniqueBrowsers := 0
 	foundUsers := ""
 
 	scanner := bufio.NewScanner(file)
-	users := make([]User, 0)
+
+	userPool := sync.Pool{
+		New: func() interface{} {
+			return new(User)
+		},
+	}
+
+	i := 0
 	for scanner.Scan() {
-		user := User{}
-		// fmt.Printf("%v %v\n", err, line)
-		err := easyjson.Unmarshal([]byte(scanner.Text()), &user)
-		//err := json.Unmarshal([]byte(line), &user)
+		user := userPool.Get().(*User)
+
+		b := scanner.Bytes()
+		err := easyjson.Unmarshal(b, user)
 		if err != nil {
 			panic(err)
 		}
-		users = append(users, user)
-	}
-
-	for i, user := range users {
 
 		isAndroid := false
 		isMSIE := false
 
 		for _, browser := range user.Browsers {
-			if regexAndroid.MatchString(browser) {
+			if strings.Contains(browser, "Android") {
 				isAndroid = true
 				notSeenBefore := true
 				for _, item := range seenBrowsers {
@@ -192,10 +196,8 @@ func FastSearch(out io.Writer) {
 					uniqueBrowsers++
 				}
 			}
-		}
 
-		for _, browser := range user.Browsers {
-			if regexMSIE.MatchString(browser) {
+			if strings.Contains(browser, "MSIE") {
 				isMSIE = true
 				notSeenBefore := true
 				for _, item := range seenBrowsers {
@@ -212,12 +214,18 @@ func FastSearch(out io.Writer) {
 		}
 
 		if !(isAndroid && isMSIE) {
+			i++
+			userPool.Put(user)
 			continue
 		}
 
 		// log.Println("Android and MSIE user:", user["name"], user["email"])
 		email := r.ReplaceAllString(user.Email, " [at] ")
-		foundUsers += fmt.Sprintf("[%d] %s <%s>\n", i, user.Name, email)
+		nfu := "[" + strconv.Itoa(i) + "] " + user.Name + " <" + email + ">\n"
+		foundUsers += nfu
+		userPool.Put(user)
+		i++
+
 	}
 
 	fmt.Fprintln(out, "found users:\n"+foundUsers)
