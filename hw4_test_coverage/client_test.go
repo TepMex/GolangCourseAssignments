@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strconv"
 	"testing"
 	"time"
@@ -30,8 +32,24 @@ func (srv *SpyRequestServer) SpyRequest(w http.ResponseWriter, r *http.Request) 
 	srv.request = r.URL.Query()
 }
 
+func responseServerFabric(status int) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+	}))
+}
+
+func jsonErrorServerFabric(errorText string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jsonWithError, _ := json.Marshal(SearchErrorResponse{errorText})
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write(jsonWithError)
+	}))
+}
+
 // код писать тут
 func TestServerErrors(t *testing.T) {
+
+	ordinalReq := SearchRequest{10, 11, "male", "gender", OrderByAsc}
 
 	dummySrv := httptest.NewServer(http.HandlerFunc(DummyServer))
 	timeoutSrv := httptest.NewServer(http.HandlerFunc(TimeoutServer))
@@ -42,8 +60,12 @@ func TestServerErrors(t *testing.T) {
 		expectedError error
 		desc          string
 	}{
-		{SearchRequest{-10, 1, "male", "gender", OrderByAsc}, dummySrv, fmt.Errorf("limit must be > 0"), "check if Limit < 0"},
-		{SearchRequest{10, -11, "male", "gender", OrderByAsc}, dummySrv, fmt.Errorf("offset must be > 0"), "check if offset < 0"},
+		{SearchRequest{-10, 1, "male", "gender", OrderByAsc}, dummySrv, fmt.Errorf("limit must be > 0"), "check error if Limit < 0"},
+		{SearchRequest{10, -11, "male", "gender", OrderByAsc}, dummySrv, fmt.Errorf("offset must be > 0"), "check error if offset < 0"},
+		{ordinalReq, responseServerFabric(http.StatusUnauthorized), fmt.Errorf("Bad AccessToken"), "check error if unauthorized"},
+		{ordinalReq, responseServerFabric(http.StatusInternalServerError), fmt.Errorf("SearchServer fatal error"), "check error if server fatal errors with 5xx"},
+		{ordinalReq, jsonErrorServerFabric("zhopa"), fmt.Errorf("unknown bad request error: zhopa"), "check unknown bad request error"},
+		{ordinalReq, jsonErrorServerFabric("ErrorBadOrderField"), fmt.Errorf("OrderFeld %s invalid", ordinalReq.OrderField), "check unknown bad request error"},
 	}
 
 	for _, test := range testErrorsTable {
@@ -62,6 +84,35 @@ func TestServerErrors(t *testing.T) {
 		}
 
 	}
+
+	t.Run("test unknown error handling", func(t *testing.T) {
+		testingRegex := regexp.MustCompile(`^unknown error .*`)
+		req := ordinalReq
+		unknownErrSrv := httptest.NewServer(http.HandlerFunc(TimeoutServer))
+
+		var errGot error
+
+		testClient := SearchClient{
+			URL:         unknownErrSrv.URL,
+			AccessToken: "ZHOPA",
+		}
+
+		errCh := make(chan error)
+		go func(e chan error) {
+			_, err := testClient.FindUsers(req)
+			e <- err
+		}(errCh)
+
+		time.Sleep(100 * time.Millisecond)
+		unknownErrSrv.CloseClientConnections()
+
+		errGot = <-errCh
+
+		if !testingRegex.MatchString(errGot.Error()) {
+			t.Errorf("Test: %s - unexpected err, Got %v, Want %v", t.Name(), errGot, testingRegex.String())
+		}
+
+	})
 
 	t.Run("test timeout error", func(t *testing.T) {
 
@@ -85,6 +136,25 @@ func TestServerErrors(t *testing.T) {
 
 		if err == nil || err.Error() != expectedErr.Error() {
 			t.Errorf("Test: %s - unexpected err, Got %v, Want %v", t.Name(), err, expectedErr)
+		}
+
+	})
+
+	t.Run("test json unpacking error", func(t *testing.T) {
+		req := ordinalReq
+		server := responseServerFabric(http.StatusBadRequest)
+
+		regexExpected := regexp.MustCompile("^cant unpack error json: .*")
+
+		testClient := SearchClient{
+			URL:         server.URL,
+			AccessToken: "ZHOPA",
+		}
+
+		_, err := testClient.FindUsers(req)
+
+		if !regexExpected.MatchString(err.Error()) {
+			t.Errorf("Test: %s - unexpected err, Got %v, Want %v", t.Name(), err, regexExpected.String())
 		}
 
 	})
