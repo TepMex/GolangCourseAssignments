@@ -21,6 +21,15 @@ func TimeoutServer(w http.ResponseWriter, r *http.Request) {
 	time.Sleep(1101 * time.Millisecond)
 }
 
+type SpyRequestServer struct {
+	request url.Values
+	handler http.HandlerFunc
+}
+
+func (srv *SpyRequestServer) SpyRequest(w http.ResponseWriter, r *http.Request) {
+	srv.request = r.URL.Query()
+}
+
 // код писать тут
 func TestServerErrors(t *testing.T) {
 
@@ -80,4 +89,27 @@ func TestServerErrors(t *testing.T) {
 
 	})
 
+}
+
+func TestSpyRequest(t *testing.T) {
+
+	spy := SpyRequestServer{}
+	spyReqSrv := httptest.NewServer(http.HandlerFunc(spy.SpyRequest))
+
+	t.Run("check if limit > 25 then request limit = 26", func(t *testing.T) {
+		testClient := SearchClient{
+			URL:         spyReqSrv.URL,
+			AccessToken: "ZHOPA",
+		}
+
+		limitMoreThan25Req := SearchRequest{255, 1, "male", "gender", OrderByAsc}
+
+		testClient.FindUsers(limitMoreThan25Req)
+
+		got := spy.request.Get("limit")
+		expected := "26"
+		if got != expected {
+			t.Errorf("Got limit=%s, want limit=%s", got, expected)
+		}
+	})
 }
