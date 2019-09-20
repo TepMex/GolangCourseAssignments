@@ -46,6 +46,14 @@ func jsonErrorServerFabric(errorText string) *httptest.Server {
 	}))
 }
 
+func successfulServerFabric(response []User) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jsonWithoutError, _ := json.Marshal(response)
+		w.WriteHeader(http.StatusOK)
+		w.Write(jsonWithoutError)
+	}))
+}
+
 // код писать тут
 func TestServerErrors(t *testing.T) {
 
@@ -64,7 +72,7 @@ func TestServerErrors(t *testing.T) {
 		{SearchRequest{10, -11, "male", "gender", OrderByAsc}, dummySrv, fmt.Errorf("offset must be > 0"), "check error if offset < 0"},
 		{ordinalReq, responseServerFabric(http.StatusUnauthorized), fmt.Errorf("Bad AccessToken"), "check error if unauthorized"},
 		{ordinalReq, responseServerFabric(http.StatusInternalServerError), fmt.Errorf("SearchServer fatal error"), "check error if server fatal errors with 5xx"},
-		{ordinalReq, jsonErrorServerFabric("zhopa"), fmt.Errorf("unknown bad request error: zhopa"), "check unknown bad request error"},
+		{ordinalReq, jsonErrorServerFabric("TOKEN :)"), fmt.Errorf("unknown bad request error: TOKEN :)"), "check unknown bad request error"},
 		{ordinalReq, jsonErrorServerFabric("ErrorBadOrderField"), fmt.Errorf("OrderFeld %s invalid", ordinalReq.OrderField), "check unknown bad request error"},
 	}
 
@@ -74,7 +82,7 @@ func TestServerErrors(t *testing.T) {
 
 		testClient := SearchClient{
 			URL:         testServer.URL,
-			AccessToken: "ZHOPA",
+			AccessToken: "TOKEN :)",
 		}
 
 		_, err := testClient.FindUsers(test.req)
@@ -94,7 +102,7 @@ func TestServerErrors(t *testing.T) {
 
 		testClient := SearchClient{
 			URL:         unknownErrSrv.URL,
-			AccessToken: "ZHOPA",
+			AccessToken: "TOKEN :)",
 		}
 
 		errCh := make(chan error)
@@ -118,7 +126,7 @@ func TestServerErrors(t *testing.T) {
 
 		testClient := SearchClient{
 			URL:         timeoutSrv.URL,
-			AccessToken: "ZHOPA",
+			AccessToken: "TOKEN :)",
 		}
 
 		timeoutRequest := SearchRequest{10, 1, "male", "gender", OrderByAsc}
@@ -148,7 +156,7 @@ func TestServerErrors(t *testing.T) {
 
 		testClient := SearchClient{
 			URL:         server.URL,
-			AccessToken: "ZHOPA",
+			AccessToken: "TOKEN :)",
 		}
 
 		_, err := testClient.FindUsers(req)
@@ -169,7 +177,7 @@ func TestSpyRequest(t *testing.T) {
 	t.Run("check if limit > 25 then request limit = 26", func(t *testing.T) {
 		testClient := SearchClient{
 			URL:         spyReqSrv.URL,
-			AccessToken: "ZHOPA",
+			AccessToken: "TOKEN :)",
 		}
 
 		limitMoreThan25Req := SearchRequest{255, 1, "male", "gender", OrderByAsc}
@@ -182,4 +190,75 @@ func TestSpyRequest(t *testing.T) {
 			t.Errorf("Got limit=%s, want limit=%s", got, expected)
 		}
 	})
+}
+
+func TestSuccessfulPath(t *testing.T) {
+
+	stubData := []User{
+		{22, "Foo", 33, "I am Foo", "male"},
+		{33, "Bar", 33, "I am Bar", "female"},
+		{22, "Foo", 33, "I am Foo", "male"},
+		{33, "Bar", 33, "I am Bar", "female"},
+		{22, "Foo", 33, "I am Foo", "male"},
+		{33, "Bar", 33, "I am Bar", "female"},
+		{22, "Foo", 33, "I am Foo", "male"},
+		{33, "Bar", 33, "I am Bar", "female"},
+		{22, "Foo", 33, "I am Foo", "male"},
+		{33, "Bar", 33, "I am Bar", "female"},
+	}
+
+	reqWithoutNextPage := SearchRequest{10, 1, "male", "gender", OrderByAsc}
+	reqWithNextPage := SearchRequest{5, 1, "male", "gender", OrderByAsc}
+
+	server1 := successfulServerFabric(stubData)
+	server2 := successfulServerFabric(stubData[0:6])
+
+	client1 := SearchClient{
+		URL:         server1.URL,
+		AccessToken: "TOKEN :)",
+	}
+
+	client2 := SearchClient{
+		URL:         server2.URL,
+		AccessToken: "TOKEN :)",
+	}
+
+	t.Run("check success when limit >= data available", func(t *testing.T) {
+		resp, err := client1.FindUsers(reqWithoutNextPage)
+
+		if err != nil {
+			t.Errorf("Error expected to be nil, got %s", err)
+		}
+
+		expectedUsers := 10
+		expectedNextPage := false
+
+		if len(resp.Users) != expectedUsers {
+			t.Errorf("Unexpected amount of users, want %d, got %d", expectedUsers, len(resp.Users))
+		}
+
+		if resp.NextPage != expectedNextPage {
+			t.Errorf("Expected resp.NextPage=%v, got %v", expectedNextPage, resp.NextPage)
+		}
+	})
+
+	t.Run("check success when limit < data available (next page required)", func(t *testing.T) {
+		resp, err := client2.FindUsers(reqWithNextPage)
+
+		if err != nil {
+			t.Errorf("Error expected to be nil, got %s", err)
+		}
+
+		expectedUsers := 5
+		expectedNextPage := true
+
+		if len(resp.Users) != expectedUsers {
+			t.Errorf("Unexpected amount of users, want %d, got %d", expectedUsers, len(resp.Users))
+		}
+
+		if resp.NextPage != expectedNextPage {
+			t.Errorf("Expected resp.NextPage=%v, got %v", expectedNextPage, resp.NextPage)
+		}
+	})
+
 }
